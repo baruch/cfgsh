@@ -1,0 +1,105 @@
+
+cfgsh 1.1.2
+
+cfgsh, the Configation Shell utility, is a small utility meant to be use for
+the configutation of embedded systems. The idea is that for embedded systems 
+the 'normal' way of configuring a GBU/Linux host is simply non sentient -
+the entire notion of an administrator that edits the system startup scripts
+simply does not fit the notion of an embedded device that by definition is
+supposed to function with little or no knowledgable person intervention.
+
+cfgsh is meant to replace the normal combination of utilities such ifconfig,
+route and friends, together with the startup scripts and configuration files
+that use them with a single program and configuration file that will implment
+the same functionality in a manner more consistent with the embedded system
+world.
+
+cfgsh is called once from the startup scripts with the special option 'setup'
+to set up the state of the machine on boot from a text based configuration file
+and hence forwards can be called either as a 'shell' from a serial or network
+session to interactivly change the state of the system adn it's configuration
+or in 'batch mode' from an executable or script (probably using the 'silent'
+option) to change the system state and configuration in a programtic fashion.
+
+The utility is built to be used in an embedded systems both from the point
+of view of robustness (no matter what you that you cannot leave the system 
+in a mangled state) and of security (it is built to run suid root with all
+the implications of this potentially dangerous situation). The above should
+*not* be taken as a to say it is free from bugs or design mistakes, only to
+indicate that thought and care have gone to it's design and implmentation in
+order to address these issues. 
+
+If you're using cfgsh and find usefull (or not :-) I would very much like to
+know about it and will be happy to recieve email to gilad@codefidence.com
+telling me about how you're using cfgsh. The information will be kept 
+confidential if you so prefer, but please make sure to indicate this in your 
+email. Any bug reports, suggestions and most especially patches will be 
+accepted with great joy! :-)
+
+License
+~~~~~~~
+
+The cfgsh Configuration Shell utility is free software, distributed under 
+the terms of the  [GNU] General Public License, version 2.  For more 
+information, see the  file COPYING.
+
+Usage
+~~~~~
+
+Usage: ./cfgsh [option]
+
+Options:
+  setup  - Setup system on boot from configuration file.
+  clean  - Reset internal state to null values.
+           Does not change the system state.
+  silent - Work normally, but don't display prompt.
+           Good for use from scripts:
+
+	# echo -e "network\nip 10.0.0.1\n" | cfgsh silent
+
+cfgsh will normally start in interactive mode. Type 'help' to get a full
+list of comamnds. TAB and the '?' can be used in stage to get context 
+sensative on-line help and command completion.
+
+Installation
+~~~~~~~~~~~~
+
+Because cfgsh needs to be able to adjust system parameters, it must be run
+as root. One way to let mere mortals to use cfgsh is to install the binary
+suid root. This is of course a security risk, but the utility was designed
+and written to mitigate the risks involved as much as possible.
+
+To install cfgsh in this fashion, simply copy the binary to where you
+want it to reside (/bin/ is a good place) and issue the following command
+as root:
+
+chown root.root /bin/cfgsh; chmod u=rsx,go=rx /bin/cfgsh
+
+cfgsh will crate the system configuration file when you run it and issue
+the "save" command from it's interactive menu. The file will be created at
+/etc/system.conf
+
+Also, cfgsh expects to find three scripts (or exeutables) at
+/usr/sbin/run-dhcpc, /usr/sbin/stop-dhcpc and /usr/sbin/iponly-dhcpc 
+that start and stop the DHCP protocol client. The assumption is that 
+scripts will return after  the DHCP server has been found (and return 
+an exit code of 0) or after the script has failed to locate an active 
+DHCP server (and return an exit code of non zero).
+
+Example for these scripts as well systemc config file is available
+in the examples directory.
+
+Special note regarding DHCP
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Note that while dhcp is on AND an active DHCP server has been found
+the 'ip',  'netmask', and 'broadcast' interface mode commands will 
+only effect the static configuration but will NOT change the actual 
+state of the system so as to not clobber the DHCP server dynamic 
+settings. If you wish to change the actual state of the system, 
+issue a 'dhcp off' command and then enter you changes.
+
+
+Share && Enjoy,
+
+Gilad Ben-Yossef <gilad@codefidence.com>
+28 September 2004

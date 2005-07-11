@@ -1,0 +1,5 @@
+#!/bin/sh
+
+VAR=/var
+
+kill `cat $VAR/$1 2>/dev/null `  2> /dev/null

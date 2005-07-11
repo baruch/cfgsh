@@ -1,0 +1,6 @@
+#!/bin/sh
+
+VAR=/var
+SCRIPT=/usr/sbin/dhcpc-script
+
+dhcpc -i $1 -p $VAR/$1 -n -s $SCRIPT -h $2

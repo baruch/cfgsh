@@ -1,0 +1,30 @@
+
+1.1.2 28 September 2004
+	- Introduced IOS style hirarichal menus with context sensative prompts.
+	- Much enhanced context sensative completion options for many commands.
+	- Added a dialog based bash script example for created configuration file
+	    written by Paramahansa Werner Polo Vieyra <pwpolo@codefidence.com>.
+	- Added a more eloborate show command.
+	- Added multiple routes support.
+	- Added multiple name servers support.
+	- Added domain search psotfix support.
+	- Added hostname command support.
+	- Added role command for choosing daemons to load.
+	- Some more stuff I can't remember now :-)
+	gilad@codefidence.com.
+
+1.1.1 15 August 2004
+	- Fixed wrong default resolv.conf location.
+	- Add support for N Ethernet interfaces.
+	- Add support for automatic detection of numebr of Ethernet interfaces.
+	- Add support for system role configuration.
+	- Add support for DHCP iponly as well as full options support.
+	- Add exmaple for DHCP scripts for udhcpc and configuration files.
+	gilad@codefidence.com.
+
+1.1.0: 06 June 2004
+	- Use shm_open to make creation of shared memory segment.
+	  implicit and automatic. gilad@codefidence.com.
+
+1.0: Somewhen in 2002...
+	- First public release. gilad@benyossef.com.
