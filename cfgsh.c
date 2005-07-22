@@ -67,10 +67,13 @@
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
+#include <arpa/inet.h> //inet_aton
 #include <netdb.h>
+#include <resolv.h>		//res_init
+
 #include <readline/readline.h>
 #include <readline/history.h>
+
 #include "cfgsh.h"
 
 static char const rcsid[] = "(C) 2005 Codefidence Ltd. $Id$";
@@ -97,6 +100,7 @@ COMMAND network_commands[] = {
   { "route", com_route, "Enter route configuration mode: route [priority]", NULL, NULL},
   { "default", com_gw, "Display or set default gateway address: gateway [address]", NULL, NULL},
   { "resolver", com_nameservers, "Enter domain name resolution configuration mode: resolver", NULL, NULL},
+  { "ns", com_ns, "Configure DNS", NULL, NULL},
   { "exit", com_root, "Return to root mode", NULL, NULL},
   { "quit", com_quit, "Logout", NULL, NULL},
   { "help", com_help, "Display this text" , NULL, NULL},
@@ -195,12 +199,12 @@ int word_num(int start, char * text)
       }
     } else if(!in_word)
       in_word=1;
-    
+
     p++;
   }
-  
+
   return word_count;
-  
+
 }
 
 /* Set the prompt */
@@ -222,9 +226,10 @@ char *prompt_string = conf->hostname;
 /* init_config */
 int init_config (int setup) {
 
-  
-  if((conf_fd = shm_open(STATE_PATH, (O_CREAT | O_RDWR), (S_IREAD | S_IWRITE))) < 0) {
-    
+  if((conf_fd = shm_open(STATE_PATH, (O_CREAT | O_EXCL | O_RDWR), (S_IREAD | S_IWRITE))) > 0 ) {
+	  setup = 1; /* We are the first instance, run setup */
+
+  } else if((conf_fd = shm_open(STATE_PATH, (O_CREAT | O_RDWR), (S_IREAD | S_IWRITE))) < 0) {
     return errno;
 
   } 
@@ -232,12 +237,13 @@ int init_config (int setup) {
   ftruncate(conf_fd, sizeof(CONF));
 
   if((conf =  mmap(0, sizeof(CONF), (PROT_READ | PROT_WRITE), MAP_SHARED, conf_fd, 0)) == MAP_FAILED) {
-    
+
     return errno;
 
   }
 
   if(setup)  {
+	printf("Configuring cfgsh...\n");
     unsigned int i;
 
     memset(conf, 0, sizeof(CONF));
@@ -259,16 +265,15 @@ int init_config (int setup) {
     strcpy(conf->route[i], "none");
   }
 
-  strcpy(conf->ns1, "none");
-  strcpy(conf->ns2, "none");
-  strcpy(conf->ns_search, "none");
+  /* Load DNS settings from resolv.conf */
+  get_resolver(  &(conf->nameservers) );
 
   strcpy(conf->role, "none");
 
   }
 
   return 0;
- 
+
 }
 
 /* parse device name from /proc/net/dev */
@@ -281,7 +286,7 @@ static char *get_name(char *name, char *p)
       break;
     if (*p == ':') {        /* could be an alias */
       char *dot = p, *dotname = name;
-      
+
       *name++ = *p++;
       while (isdigit(*p))
 	*name++ = *p++;
@@ -319,9 +324,9 @@ int find_ifs(void) {
 
   while (fgets(buf, sizeof(buf), dev_file)) {
     char name[MAX_BUF_SIZE];
- 
+
     get_name(name, buf);
-     
+
     if( !strncmp(name, IFNAMEBASE, 3)) i++; /* Get only interfaces starting with 'eth' */
   }
 
@@ -339,8 +344,22 @@ int resolve(struct sockaddr_in * sockaddr, char * host_name) {
 
   struct hostent * host;
 
+  //Set resolver options.
+  res_init();		//Force reread resolv.conf. Remember the file could change between calls!
+  sethostent(1);	//Keep TCP connection open between requests
+
+  //Turn on TCP mode. This is done to remove the UDP timeout if ns is wrong. 
+  //The idea is that usability is more important than resolving if network is unreliable. 
+  //Users hate waiting 20 seconds for resolution.
+  _res.options = _res.options | RES_USEVC;
+
   if((!sockaddr) || (!host_name))
     return EFAULT;
+
+  if ( checkarg(host_name, "none") )
+  {
+	return ENOENT;
+  }
 
   if(!(host = gethostbyname(host_name))) {
 
@@ -369,13 +388,13 @@ get_if_flags(char * if_name, short * flags) {
 
   struct ifreq ifr;
   int sock, ret = 0;
-  
+
   if((!if_name) || (!flags))
     return EFAULT;
-  
+
   if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 )
     return errno;
-  
+
   strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
 
   if(ioctl(sock, SIOCGIFFLAGS , &ifr) >= 0) {
@@ -400,13 +419,13 @@ set_if_flags(char * if_name, short flags) {
 
   struct ifreq ifr;
   int sock, ret = 0;
-  
+
   if((!if_name) || (!flags))
     return EFAULT;
-  
+
   if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 )
     return errno;
-  
+
   strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
 
   if((ret = ioctl(sock, SIOCGIFFLAGS, &ifr)) < 0) {
@@ -415,7 +434,7 @@ set_if_flags(char * if_name, short flags) {
   }
 
   ifr.ifr_flags |= flags;
-  
+
   if(ioctl(sock,  SIOCSIFFLAGS, &ifr) < 0) {
     ret = errno;
   }
@@ -424,7 +443,7 @@ set_if_flags(char * if_name, short flags) {
 
   close(sock);
   return ret;
-  
+
 }
 
 int
@@ -432,7 +451,7 @@ set_numeric_ip(char * if_name, struct sockaddr_in * sockaddr, ADDR_SET_OPS opera
 
   struct ifreq ifr;
   int sock, ret = 0;
-  
+
   if((!if_name) || (!sockaddr)) {
     ret = EFAULT;
     goto out;
@@ -442,14 +461,14 @@ set_numeric_ip(char * if_name, struct sockaddr_in * sockaddr, ADDR_SET_OPS opera
     ret = errno;
     goto out;
   }
-  
+
   memcpy(&ifr.ifr_addr, sockaddr, sizeof(struct sockaddr));
   strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
-  
+
   if((ret = ioctl(sock, operation , &ifr)) != 0) {
     ret = errno;
   } 
-  
+
   close(sock);
 
  out:
@@ -481,7 +500,7 @@ set_if_address(char * if_name, char * in_address, ADDR_SET_OPS operation, char *
   /* With DHCP working we want to change the active config but not the system */
   if(conf->dhcp_is_on[current_ifr]) 
     goto ok; 
-  
+
   if((ret = set_numeric_ip(if_name, &sockaddr, operation)) != 0) {
     goto out;
   } 
@@ -508,9 +527,9 @@ get_if_address(char * if_name, char * address, ADDR_GET_OPS operation) {
 
   if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 )
     return errno;
-  
+
   strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
-  
+
   if(ioctl(sock, operation , &ifr) >= 0) {
 
     struct sockaddr_in * sadr = (struct sockaddr_in *)&ifr.ifr_addr;
@@ -526,7 +545,7 @@ get_if_address(char * if_name, char * address, ADDR_GET_OPS operation) {
   close(sock);
   return ret;
 }
-  
+
 /* Support function to automatically set the broadcast address */
 int auto_broadcast(unsigned int ifr) {
 
@@ -558,40 +577,119 @@ int auto_broadcast(unsigned int ifr) {
 
 }
 
-int write_resolver(char *ns1, char *ns2, char * search)
+/* helper function to parse the resolv.conf file */
+int
+get_resolver (dns_record *nameservers)
+{
+	int ret = 1;	//have we found at least one configured name server?
+
+	FILE *resolv;
+
+	const char *nameserver_C = "nameserver ";
+	const char *domain_C = "domain ";
+	const char *comment_C = "#";
+
+	int  priority = 0;
+
+	char *resolv_buffer;
+	char *resolv_line;
+	char *comment; 
+	char *nameserver_str;
+
+	struct in_addr inp;
+
+//	struct sockaddr_in sock;	//For resolve
+
+	/* Zero out nameserver configuration */
+	strcpy(nameservers->primary, "none");
+	strcpy(nameservers->secondary, "none");
+	strcpy(nameservers->domain, "none");
+
+	//Try to read resolv.conf
+	if( (resolv = fopen(RESOLV_PATH, "r")) != NULL ) 
+	{
+	  resolv_buffer = (char *)malloc(PATH_MAX*2);
+	  fread(resolv_buffer, sizeof(char), PATH_MAX*2, resolv);
+
+	  //for each line of the file, search for the nameserver statement
+	  resolv_line = strtok(resolv_buffer, "\n");
+	  do {
+		if( (nameserver_str = strstr(resolv_line, nameserver_C)) != NULL )
+		{
+			nameserver_str += strlen(nameserver_C);
+			if( strlen(nameserver_str) > 0 )
+
+				if( ((comment = strstr(resolv_line, comment_C)) == NULL) 
+						|| comment >= nameserver_str)	//if the line is not commented
+					if(priority < 2 &&						//and we didn't set both nameservers yet 
+						inet_aton(nameserver_str, &inp))	//and the nameserver is a legal ip
+					{
+						if(priority == 0)
+							snprintf(nameservers->primary, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(inp.s_addr));
+						else
+							snprintf(nameservers->secondary, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(inp.s_addr));
+
+						ret = 0;	//found a legal nameserver
+						priority++;
+
+					}
+		}
+		//Search for a 'domain' line.
+		else if( (nameserver_str = strstr(resolv_line, domain_C)) != NULL)
+		{
+			nameserver_str += strlen(domain_C);
+			if( ((comment = strstr(resolv_line, comment_C)) == NULL) 
+					|| comment >= nameserver_str)	//if the line is not commented
+			{
+					nameserver_str = stripwhite(nameserver_str);
+//					if( resolve(&sock, nameserver_str) == 0)	//And the domain resolves
+                    strncpy(nameservers->domain, nameserver_str, HOST_NAME_MAX);
+			}
+
+
+		}
+	  } while( (resolv_line = strtok(NULL, "\n")) != NULL );
+	  //If the file has a comment '#' before the string we are looking for, continue
+	  fclose(resolv);
+	  free(resolv_buffer);
+	}
+	return ret;
+}
+
+int write_resolver(dns_record nameservers)
 {
 
   FILE * file;
   int ret = 0;
 
   /* FIX ME: use a random name here and check for existence! */
-
   if(! (file = fopen(RESOLV_PATH".tmp", "w"))) {
     ret = errno;
     goto out;
   }
-  
-  fprintf(file, "; generated by %s\n", progname);
 
-  if(! checkarg(search, "none"))
-    fprintf(file, "search %s\n", search);
+  fprintf(file, "# generated by %s\n", progname);
 
-  if(! checkarg(ns1, "none"))
-    fprintf(file, "nameserver %s\n", ns1);
+  if(! checkarg(nameservers.primary, "none") )
+    fprintf(file, "nameserver %s\n", nameservers.primary);
+  if(! checkarg(nameservers.secondary, "none") )
+    fprintf(file, "nameserver %s\n", nameservers.secondary);
 
-  if(! checkarg(ns2, "none"))
-    fprintf(file, "nameserver %s\n", ns2);
-  
+  /* Enforce a domain / search mutex */
+  if(! checkarg(nameservers.secondary, "none") )
+    fprintf(file, "domain %s\n", nameservers.domain);
+  else
+    fprintf(file, "\nsearch localhost\n");
+
   fclose(file);
-  
-  
+
+
   ret = commit_file(RESOLV_PATH".tmp", RESOLV_PATH);
-  
+
  out:
   return ret;
-  
-}
 
+}
 
 /* A safe(r) replacement for the system() call */
 
@@ -661,7 +759,7 @@ void dump_config(FILE * file) {
 
   fprintf(file, "# Configuration Shell config file\n");
 
-  
+
   fprintf(file, "hostname %s\n", conf->hostname);
   fprintf(file, "timezone %s\n", conf->tz);
 
@@ -685,9 +783,9 @@ void dump_config(FILE * file) {
   }
 
   fprintf(file, "\tresolver\n");
-  fprintf(file, "\t\tprimary %s\n", conf->ns1);
-  fprintf(file, "\t\tsecondary %s\n", conf->ns2);
-  fprintf(file, "\t\tsearch %s\n", conf->ns_search);
+  fprintf(file, "\t\tprimary %s\n", (conf->nameservers).primary);
+  fprintf(file, "\t\tsecondary %s\n", (conf->nameservers).secondary);
+  fprintf(file, "\t\tsearch %s\n", (conf->nameservers).domain);
   fprintf(file, "\t\texit\n");
   fprintf(file, "\texit\n");
 
@@ -706,8 +804,17 @@ int main(int argc, char * argv[])
   int setup = 0;
   progname = argv[0];
 
+  //Set uid / gid
+  uid_t uid = 0;
+  gid_t gid = 0;
+  progname = argv[0];
+
+  //We do not check if we succeeded or failed. If we couldn't become root just leave us unprivileged. 
+  setresuid(uid, uid, uid); 
+  setresgid(gid, gid, gid); 
+
   initialize_readline();	/* Bind our completer. */
-  
+
   if((argc == 2) && checkarg(argv[1], "setup") ) {
 
     setup = 1;
@@ -766,7 +873,7 @@ int main(int argc, char * argv[])
 
       free (line);
     }
-  
+
   close(conf_fd);
   exit (0);
 }
@@ -834,7 +941,7 @@ char * stripwhite (char *string)
 
   for (s = string; whitespace (*s); s++)
     ;
-    
+
   if (*s == 0)
     return (s);
 
@@ -922,18 +1029,18 @@ char * interface_generator(const char *text, int state)
   if(list_index < conf->num_ifs){
 
     char * if_name = xmalloc(IFNAMESIZ);
-    
+
     if(!if_name) goto out;
-    
+
     snprintf(if_name, IFNAMESIZ, "%s%d", IFNAMEBASE, list_index++);
 
     if( checkarg(if_name, text) ) {
       return if_name;
     }
-    
+
     free(if_name);
   }
-  
+
   out:
 
   /* If no names matched, then return NULL. */
@@ -985,7 +1092,7 @@ char ** interface_completion_matches(const char * text, char * dummy, int start)
     return rl_completion_matches(text, interface_generator);
 
   return NULL;
-  
+
 }
 
 char ** route_completion_matches(const char * text, char * dummy, int start)
@@ -995,7 +1102,7 @@ char ** route_completion_matches(const char * text, char * dummy, int start)
     return rl_completion_matches(text, interface_generator);
 
   return NULL;
-  
+
 }
 
 
@@ -1006,7 +1113,7 @@ char ** show_completion_matches(const char * text, char * dummy, int start)
     return rl_completion_matches(text, show_generator);
 
   return NULL;
-  
+
 }
 
 
@@ -1017,7 +1124,7 @@ char ** dhcp_completion_matches(const char * text, char * dummy, int start)
     return rl_completion_matches(text, dhcp_generator);
 
   return NULL;
-  
+
 }
 
 /* Attempt to complete on the contents of TEXT.  START and END bound the
@@ -1041,7 +1148,7 @@ char ** cfgsh_completion (const char *text, int start, int end)
     matches = rl_completion_matches(text, command_generator);
 
   else {
-    
+
     int size, i;
     char * cmd, * cmd_end  = strpbrk(rl_line_buffer, rl_basic_word_break_characters);
 
@@ -1068,7 +1175,7 @@ char ** cfgsh_completion (const char *text, int start, int end)
       printf ("\n");
       com_help(cmd);
     }
-  
+
     free(cmd);
     rl_reset_line_state();
   }
@@ -1140,7 +1247,7 @@ int com_ip (char *arg)
   char ip[IPQUADSIZ];
 
   arg = stripwhite(arg);
-  
+
   if (*arg) {
 
     if( checkarg(arg, "none") ) {
@@ -1158,7 +1265,7 @@ int com_ip (char *arg)
        a good reason. It's crude, but it works. */
 
     set_if_address(ifrname, conf->nmask[current_ifr], SET_NETMASK, ip);
-    
+
     /* broadcast may be automatic, in which case we need to run
        the auto code, otherwise, just do same as with netmask */
 
@@ -1173,7 +1280,7 @@ int com_ip (char *arg)
   } else {
 
     printf ("Current configured static IP address for interface %s is %s\n", ifrname, conf->ip[current_ifr]);
-    
+
     if(get_if_address(ifrname, ip, GET_ADDRESS) == 0) {
       printf ("Current actual IP address is %s\n", ip);
     }
@@ -1190,9 +1297,9 @@ int com_netmask (char *arg)
 
 
   arg = stripwhite(arg);
-  
+
   if (*arg) {
-    
+
     if( checkarg(arg, "none") ) {
       strncpy(conf->nmask[current_ifr], "none", IPQUADSIZ);
 
@@ -1207,9 +1314,9 @@ int com_netmask (char *arg)
     }
 
     printf ("Static netmask address for interface %s set to %s\n", ifrname, conf->nmask[current_ifr] );
-    
+
   } else {
-    
+
     char nmask[IPQUADSIZ];
 
     printf ("Current configured static netmask address for interface %s is %s\n", ifrname, conf->nmask[current_ifr]);
@@ -1217,9 +1324,9 @@ int com_netmask (char *arg)
     if(get_if_address(ifrname, nmask, GET_NETMASK) == 0) {
       printf ("Current actual netmask address for interface %s is %s\n", ifrname, nmask);
     }
-    
+
   }
-  
+
  out:
   return 0;
 
@@ -1229,13 +1336,13 @@ int com_netmask (char *arg)
 int com_broadcast (char *arg)
 {
   int ret;
-  
+
   arg = stripwhite(arg);
-  
+
   // ???  auto_broadcast(current_ifr);
 
   if (*arg) {
-    
+
     if( checkarg(arg, "none") ) {
 
       strncpy(conf->bcast[current_ifr], "none", IPQUADSIZ);
@@ -1244,18 +1351,18 @@ int com_broadcast (char *arg)
 
       strncpy(conf->bcast[current_ifr], "auto", IPQUADSIZ);
       auto_broadcast(current_ifr);
-      
+
     } else if((ret = set_if_address(ifrname, arg, SET_BROADCAST, conf->bcast[current_ifr]))) {
-      
+
       printf("Error setting static broadcast address for interface %s to %s: %s\n", ifrname, arg, strerror(ret));
       goto out;
-	
+
     }
 
     printf ("Static broadcast address for interface %s set to %s\n", ifrname, conf->bcast[current_ifr]);
 
   } else {
-    
+
     char bcast[IPQUADSIZ];
 
     printf ("Current configured static broadcast address for interface %s is %s\n", ifrname, conf->bcast[current_ifr]);
@@ -1266,7 +1373,7 @@ int com_broadcast (char *arg)
 
 
   }
-  
+
  out:
   return 0;
 
@@ -1275,14 +1382,14 @@ int com_broadcast (char *arg)
 
 int com_show(char * arg)
 {
-  
+
   arg = stripwhite(arg);
   unsigned int i;
-  
+
   if (*arg) {
-    
+
     if( checkarg(arg, SHOW_OPT_INTERFACES) ) {
-      
+
       for(i=0; i<conf->num_ifs; i++) {
 	current_ifr=i;
 	sprintf(ifrname, "%s%d", IFNAMEBASE, i);
@@ -1291,17 +1398,17 @@ int com_show(char * arg)
 	com_broadcast("");
 	com_dhcp("");
       }
-      
+
       return 0;
     }
-       
+
     if( checkarg(arg, SHOW_OPT_ROUTES) ) {
 
       for(i=0; i<ROUTE_NUM; i++) {
 	current_route=i;
 	com_show_route("");
       }
-      
+
       return 0;
     }
 
@@ -1309,23 +1416,21 @@ int com_show(char * arg)
     if( checkarg(arg, SHOW_OPT_RESOLVER) ) {
 
       com_ns("");
-      com_ns2("");
-      com_search("");
-      
+
       return 0;
     }
-    
+
     if( checkarg(arg, SHOW_OPT_CONFIG) ) {
-	    
+
       dump_config(stdout);
-      
+
       return 0;
     }
 
   }
 
   com_help("show");
-  
+
   return 1;
 
 }
@@ -1337,12 +1442,12 @@ int com_save(char * arg)
   FILE * file;
 
   /* See remark about random file names later on... */
-  
+
   if(!(file = fopen(CONFIG_PATH".tmp", "w"))) {
     ret = errno;
     goto out;
   }
-  
+
   dump_config(file);
 
   fclose(file);
@@ -1356,7 +1461,7 @@ int com_save(char * arg)
   } else {
     printf("Configuration saved\n");
   }
-  
+
   return ret;
 
 
@@ -1367,42 +1472,42 @@ int com_role (char *arg)
 {
 
   arg = stripwhite(arg);
-  
+
   if (*arg) {
-    
+
     char rolepath[PATH_MAX];
     struct stat statbuf;
-    
+
     if(strstr(arg, "..") || (index(arg, '/') == arg)) {
       /* Damn script kiddies... */
       goto failure;
     }
-    
+
     snprintf(rolepath, PATH_MAX, ROLES_PATH"/%s", arg);
-    
+
     if(stat(rolepath, &statbuf) < 0) {
       goto failure;
     }
-    
+
     if(!S_ISREG(statbuf.st_mode)) {
       goto failure;
     }
-    
+
     unlink(ROLE_PATH);
-    
+
     if(symlink(rolepath, ROLE_PATH) == 0 ) {
       printf("Role set to %s.\n", arg);
       strncpy(conf->role, arg, PATH_MAX);
     } else {
       printf("Role setup failure!\n");
     }
-    
+
   } else {
     printf ("Role is %s\n", conf->role);
   }
-  
+
   return 0;
-  
+
  failure:  
   printf("%s is not a valid role. \n", arg);
   return 0;
@@ -1413,131 +1518,133 @@ int com_role (char *arg)
 
 int com_ns (char *arg)
 {
-  int ret;
-  
+	int ret = 0;
+	struct in_addr inp;
+	struct sockaddr_in sock;	//For resolve
+	int set_who = RESOLV_SET_PRIMARY | RESOLV_SET_SECONDARY;
+
+	dns_record nameservers;
+	get_resolver(&nameservers); /* Try to load current resolv.conf configuration */
+
   arg = stripwhite(arg);
-  
+
   if (*arg) {
-    
-    struct in_addr inp;
-    char new_ns[IPQUADSIZ];
-    
+	//check if user wishes to set an attribute
+	if( strstr(arg, "primary") == arg )
+	{
+		arg += strlen("primary");
+		arg = stripwhite(arg);
+		set_who = RESOLV_SET_PRIMARY;
+	}
+	else if( strstr(arg, "secondary") == arg)
+	{
+		arg += strlen("secondary");
+		arg = stripwhite(arg);
+		set_who = RESOLV_SET_SECONDARY;
+	}
+	else if( strstr(arg, "domain") == arg)
+	{
+		arg += strlen("domain");
+		arg = stripwhite(arg);
+		set_who = RESOLV_SET_DOMAIN;
+	}
+
+    /* If the user wish to delete a record. For example 'ns secondary none' */
     if( checkarg(arg, "none") ) {
-      
-      strncpy(new_ns, "none", IPQUADSIZ);
-      
+      if( set_who & RESOLV_SET_PRIMARY )
+		strcpy(nameservers.primary, "none");
+
+	  if( set_who & RESOLV_SET_SECONDARY )
+		 strcpy(nameservers.secondary, "none");
+
+	  if( set_who & RESOLV_SET_DOMAIN )
+	 	strcpy(nameservers.domain, "none");
+
     } else {
-      
-      if(inet_aton(arg, &inp) == 0) {
-	ret = EINVAL;
-	goto error;
-      }
+		/* Sanity checks */
+		/* New primary / secondary DNS it must be an IP*/
+        if (set_who & (RESOLV_SET_PRIMARY | RESOLV_SET_SECONDARY) 
+				&& inet_aton(arg, &inp) == 0) {
+          ret = EINVAL;
+          goto error;
+        }
+		/* New search domain must resolve */
+		else if( (set_who & RESOLV_SET_DOMAIN) 
+				&& ( (ret = resolve(&sock, arg)) != 0) ) {
+		  goto error;
+		}
 
-      snprintf(new_ns, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(inp.s_addr));
-    }
-    
+	    if( set_who & RESOLV_SET_PRIMARY)
+		  snprintf(nameservers.primary, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(inp.s_addr));
 
-    if((ret = write_resolver(new_ns, conf->ns2, conf->ns_search)) != 0) {
-      goto error;
-    }
+		else if( set_who & RESOLV_SET_SECONDARY)
+		  snprintf(nameservers.secondary, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(inp.s_addr));
 
-    strncpy(conf->ns1, new_ns, IPQUADSIZ);
-      
-    printf ("Primary name server address set to %s\n", conf->ns1);
+		else if(set_who & RESOLV_SET_DOMAIN )
+		  strncpy(nameservers.domain, arg, HOST_NAME_MAX);
 
-  } else {
 
-    printf ("Primary name server address is %s\n", conf->ns1);
+    } //set new parameters
 
+	/* Save configuration */
+	conf->nameservers = nameservers;
+
+	//save the nameserver configuration to resolv.conf only if something changed
+	if( (ret = write_resolver(nameservers)) != 0)
+		goto error;
+
+	if(set_who & RESOLV_SET_PRIMARY)
+	    printf ("Primary name server address set to %s\n", (conf->nameservers).primary);
+	else if(set_who & RESOLV_SET_SECONDARY)
+		printf ("Secondary name server address set to %s\n", (conf->nameservers).secondary);
+	else if(set_who & RESOLV_SET_DOMAIN)
+		printf ("Default domain set to %s\n", (conf->nameservers).domain);
+
+  } // if arg
+
+  //No arguments, print name servers
+  else 
+  {
+    if( strlen(nameservers.primary) ) /* Actual data from resolv.conf */
+    {
+	    printf ("Primary name server address is %s\n", 
+					strlen(nameservers.primary) ? nameservers.primary: "none");
+		printf ("Secondary name server is %s\n", 
+					strlen(nameservers.secondary) ? nameservers.secondary : "none");
+		printf ("Default domain is %s\n",
+					strlen(nameservers.domain) ? nameservers.domain : "none");
+	}
+	else	/* no resolv.conf? just print conf->ns stuff */
+	{
+	    printf ("Static configured primary name server address is %s\n", (conf->nameservers).primary);
+	    printf ("Static configured secondary name server address is %s\n", (conf->nameservers).secondary);
+	    printf ("Static configured default search domain is %s\n", (conf->nameservers).domain);
+	}
   }
 
   return 0;
 
  error:
-  
-  printf("Error setting primary nameserver address to %s: %s\n", arg, strerror(ret));
+
+  printf("Error setting nameserver address to %s: %s\n", arg, strerror(ret));
   return 0;
 
 }
 
 int com_ns2 (char *arg)
 {
-  int ret;
-  
-  arg = stripwhite(arg);
-  
-  if (*arg) {
-    
-    struct in_addr inp;
-    char new_ns[IPQUADSIZ];
-    
-    if( checkarg(arg, "none") ) {
-      
-      strncpy(new_ns, "none", IPQUADSIZ);
-      
-    } else {
-      
-      if(inet_aton(arg, &inp) == 0) {
-	ret = EINVAL;
-	goto error;
-      }
-
-      snprintf(new_ns, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(inp.s_addr));
-    }
-    
-
-    if((ret = write_resolver(conf->ns1, new_ns, conf->ns_search)) != 0) {
-      goto error;
-    }
-
-    strncpy(conf->ns2, new_ns, IPQUADSIZ);
-      
-    printf ("Secondary name server address set to %s\n", conf->ns2);
-
-  } else {
-
-    printf ("Secondary name server address is %s\n", conf->ns2);
-
-  }
-
-  return 0;
-
- error:
-  
-  printf("Error setting secondary nameserver address to %s: %s\n", arg, strerror(ret));
-  return 0;
-
+  char fullarg[HOST_NAME_MAX + 10] = {0};
+  strcpy(fullarg, "secondary ");
+  strncat(fullarg, arg, HOST_NAME_MAX - 1);
+  return com_ns(fullarg);
 }
 
 int com_search (char *arg)
 {
-  int ret;
-  
-  arg = stripwhite(arg);
-  
-  if (*arg) {
-    
-    if((ret = write_resolver(conf->ns1, conf->ns2, arg)) != 0) {
-      goto error;
-    }
-
-    strncpy(conf->ns_search, arg, HOST_NAME_MAX);
-      
-    printf ("Search domain set to %s\n", conf->ns_search);
-
-  } else {
-
-    printf ("Search domain is %s\n", conf->ns_search);
-
-  }
-
-  return 0;
-
- error:
-  
-  printf("Error setting search domain to %s: %s\n", arg, strerror(ret));
-  return 0;
-
+  char fullarg[HOST_NAME_MAX + 10] = {0};
+  strcpy(fullarg, "domain ");
+  strncat(fullarg, arg, HOST_NAME_MAX - 1);
+  return com_ns(fullarg);
 } 
 
 #define NULLADDR(_X) { _X.sin_port=0; _X.sin_family=AF_INET; _X.sin_addr.s_addr = INADDR_ANY;} while(0)
@@ -1563,7 +1670,7 @@ int com_del_route (char *arg)
   if( checkarg(target_s, "none") ) {
     return 0;
   }
-  
+
   if ((ret = resolve(&target, target_s)) != 0) {
     goto error;
   }
@@ -1572,7 +1679,7 @@ int com_del_route (char *arg)
 
   if(!netmask_s)
     goto noarg;
-  
+
   if ((ret = resolve(&netmask, netmask_s)) != 0) {
     goto error;
   }
@@ -1598,7 +1705,7 @@ int com_del_route (char *arg)
 
   rt.rt_flags = RTF_UP;
   rt.rt_metric = current_route;
-  
+
   memcpy(&rt.rt_dst, &target, sizeof(struct sockaddr));
   memcpy(&rt.rt_genmask, &netmask, sizeof(struct sockaddr));
 
@@ -1619,7 +1726,7 @@ int com_del_route (char *arg)
     ret = errno;
     goto error;
   }
-    
+
   close(sock);  
 
   strcpy(conf->route[current_route], "none");
@@ -1632,7 +1739,7 @@ int com_del_route (char *arg)
   free(arg);
   com_help("delete");
   return 2;
-  
+
  noarg:
   printf("Required argument missing: %s\n", conf->route[current_route]);  
   free(arg);
@@ -1667,7 +1774,7 @@ int com_set_route (char *arg)
   if( checkarg(target_s, "none") ) {
     return com_del_route("");
   }
-  
+
   if ((ret = resolve(&target, target_s)) != 0) {
     goto error;
   }
@@ -1676,7 +1783,7 @@ int com_set_route (char *arg)
 
   if(!netmask_s)
     goto noarg;
-  
+
   if ((ret = resolve(&netmask, netmask_s)) != 0) {
     goto error;
   }
@@ -1687,7 +1794,7 @@ int com_set_route (char *arg)
     goto noarg;
 
   gateway_s = strtok(NULL, rl_basic_word_break_characters);
-  
+
   if(!gateway_s)
     goto doit;
 
@@ -1701,7 +1808,7 @@ int com_set_route (char *arg)
 
   rt.rt_flags = RTF_UP;
   rt.rt_metric = current_route;
-  
+
   memcpy(&rt.rt_dst, &target, sizeof(struct sockaddr));
   memcpy(&rt.rt_genmask, &netmask, sizeof(struct sockaddr));
 
@@ -1709,7 +1816,7 @@ int com_set_route (char *arg)
       rt.rt_flags |= RTF_GATEWAY;
       memcpy(&rt.rt_gateway, &gateway, sizeof(struct sockaddr));
   }
-  
+
   rt.rt_dev = dev;
 
   if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
@@ -1721,7 +1828,7 @@ int com_set_route (char *arg)
     ret = errno;
     goto error;
   }
-    
+
   close(sock);  
 
   snprintf(tmp_route_s, MAX_ROUTE_SIZE, "%s %s ", target_s, netmask_s);
@@ -1742,7 +1849,7 @@ int com_set_route (char *arg)
   printf("Invalid route: %s\n", strerror(ret));
   com_help("set");
   return 2;
-  
+
  noarg:
   printf("Required argument missing\n");
   com_help("set");
@@ -1755,15 +1862,15 @@ int com_gw (char *arg)
   int sock, ret, none;
   struct rtentry rt;
   struct sockaddr_in sockaddr, deladdr;
-  
+
 
   arg = stripwhite(arg);
-  
+
   if (!*arg) {
 
     printf ("Static broadcast address is %s\n", conf->gw);
     return 0;
-    
+
   }
 
   none = ( checkarg(arg, "none") );
@@ -1783,43 +1890,43 @@ int com_gw (char *arg)
   memset(&rt, 0, sizeof(struct rtentry));
   rt.rt_flags = RTF_UP | RTF_GATEWAY;
   rt.rt_metric = current_route;
-  
+
   deladdr.sin_addr.s_addr = INADDR_ANY;
   memcpy(&rt.rt_dst, &deladdr, sizeof(struct sockaddr));
-  
+
   deladdr.sin_addr.s_addr = INADDR_ANY;
   memcpy(&rt.rt_genmask, &deladdr, sizeof(struct sockaddr));
 
   deladdr.sin_addr.s_addr = INADDR_ANY;
   memcpy(&rt.rt_gateway, &deladdr, sizeof(struct sockaddr));
-  
+
   /* this can fail if we've just came up */
   ioctl(sock, SIOCDELRT , &rt);
-  
+
   if(none) {
     strncpy(conf->gw, "none", IPQUADSIZ);
     goto ok;
   } 
-  
+
   memcpy(&rt.rt_gateway, &sockaddr, sizeof(struct sockaddr));
-  
+
   if((ret = ioctl(sock, SIOCADDRT , &rt)) != 0) {
     ret = errno;
     goto error;
   }
-    
+
   close(sock);
-  
+
   snprintf(conf->gw, IPQUADSIZ, "%d.%d.%d.%d", NIPQUAD(sockaddr.sin_addr));
 
  ok:
   printf ("Static gateway address set to %s\n", conf->gw);
   return 0;
-  
+
  error:
   printf("Error setting static gateway address to %s: %s\n", arg, strerror(ret));
   return ret;
-  
+
 }
 
 int com_dhcp (char *arg)
@@ -1840,7 +1947,7 @@ int com_dhcp (char *arg)
       printf("DHCP is already on for interface %s. Turn it off first to make changes\n", ifrname);
       return 1; 
     }
-      
+
     strncpy(conf->dhcp[current_ifr], DHCP_OPT_ON, sizeof(DHCP_OPT_ON));
 
     if(safesystem(DHCPCD_START_PATH, cmd) != 0) {
@@ -1855,7 +1962,7 @@ int com_dhcp (char *arg)
     goto out;
 
   }
-  
+
 
   if( checkarg(arg, DHCP_OPT_IPONLY) ) {
 
@@ -1867,7 +1974,7 @@ int com_dhcp (char *arg)
       printf("DHCP is already on for interface %s. Turn it off first to make changes\n", ifrname);
       return 1; 
     }
-                                                                                                            
+
     if(safesystem(DHCPCD_START_PATH, cmd) != 0) {
       printf("Failed getting DHCP response in iponly mode on interface %d. Will use static information.\n", current_ifr);
 
@@ -1882,7 +1989,7 @@ int com_dhcp (char *arg)
   if( checkarg(arg, DHCP_OPT_OFF) ) {
 
     char *cmd[3] = { DHCPCD_STOP_PATH, ifrname, NULL};
-      
+
     strncpy(conf->dhcp[current_ifr], DHCP_OPT_OFF, sizeof(DHCP_OPT_OFF));
     safesystem(DHCPCD_STOP_PATH, cmd);
     conf->dhcp_is_on[current_ifr] = 0;
@@ -1890,7 +1997,7 @@ int com_dhcp (char *arg)
 
   } else 
     printf("Unknown dhcp command %s\n", arg);
- 
+
 out: 
 return 0;
 }
@@ -1899,50 +2006,50 @@ int com_tz (char * arg)
 {
 
   arg = stripwhite(arg);
-  
+
   if (*arg) {
-    
+
     char tzpath[PATH_MAX];
     struct stat statbuf;
 
     if(!strcmp(arg, "none"))
 	goto ok;
-    
+
     if(strstr(arg, "..") || (index(arg, '/') == arg)) {
       /* Damn script kiddies... */
       goto failure;
     }
-    
+
     snprintf(tzpath, PATH_MAX, ZONES_PATH"/%s", arg);
-    
+
     if(stat(tzpath, &statbuf) < 0) {
       goto failure;
     }
-    
+
     if(!S_ISREG(statbuf.st_mode)) {
       goto failure;
     }
-    
+
     unlink(TZ_PATH);
-    
+
     if(symlink(tzpath, TZ_PATH) == 0 ) {
       printf("Time zone set to %s.\n", arg);
       strncpy(conf->tz, arg, PATH_MAX);
     } else {
       printf("Time zone setup failure!");
     }
-    
+
   } else {
     printf ("Timezone is %s\n", conf->tz);
   }
- 
+
  ok: 
   return 0;
-  
+
  failure:  
   printf("%s is not a valid time zone. \n", arg);
   return 0;
-  
+
 }
 
 /* Print out help for ARG, or for all of the commands if ARG is
@@ -2014,7 +2121,7 @@ int com_reboot (char *arg)
 {
 
   kill(1, SIGTERM);
-  
+
   return (0);
 
 }
@@ -2058,7 +2165,7 @@ int com_int (char *arg)
   }
                                                                                                                              
   if(getifr(arg, ifrname, &current_ifr)) {
-    printf("No such interface %s\n.", arg);
+    printf("No such interface %s\n", arg);
     return 1;
   }
                                                                                                                              
@@ -2076,7 +2183,7 @@ int com_route (char *arg)
   char tmp[PROMPT_SIZE];
 
   arg = stripwhite(arg);
-  
+
   if (!*arg) {
 
     printf ("Please supply a route proiority. Press TAB to get a list of available ones.\n");
@@ -2113,12 +2220,12 @@ int com_hostname (char *arg)
 
   int size;
   arg = stripwhite(arg);
-  
+
   if (!*arg) {
 
     printf ("Host name is %s\n", conf->hostname);
     return 0;
-    
+
   }
 
   size = strlen(arg) + 1;
@@ -2134,7 +2241,7 @@ int com_hostname (char *arg)
     printf("Setting of hostname to %s failed because %s\n", arg, strerror(errno));
     return 1;
   }
-  
+
   snprintf(conf->hostname, HOST_NAME_MAX - 1, arg); 
 
   return (0);

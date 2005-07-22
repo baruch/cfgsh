@@ -1,6 +1,12 @@
 
 	- Commited Ami Chayun <ami@beyondsecurity.com> provided checkarg patch:
 	  A safe(r) replacement to strcmp (if used wisely).
+	- Commited  Ami Chayun <ami@beyondsecurity.com>  provided patches to
+	  automatically run "clean" on first run if no shm segment exists,
+	  re-do name server handling to use a single struct, read existing
+ 	  resolv.conf, use TCP connection for DNS resolution to solve
+	  issue of "put wrong DNS, wait 20 seconds for timeout punishment" 
+	   and remove a lot of empty lines from the source :-)
 
 1.1.2 28 September 2004
 	- Introduced IOS style hirarichal menus with context sensative prompts.

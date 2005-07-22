@@ -127,6 +127,12 @@ int com_search PARAMS((char *));
 int com_nameservers PARAMS((char *));
 int com_role PARAMS((char *));
 int com_help PARAMS((char *));
+/* DNS record modification settings */
+
+#define RESOLV_SET_PRIMARY (0x1)
+#define RESOLV_SET_SECONDARY (0x2)
+#define RESOLV_SET_DOMAIN (0x4)
+
 int com_quit PARAMS((char *));
 int com_save PARAMS((char *));
 int com_show PARAMS((char *));
@@ -151,16 +157,6 @@ char ** show_completion_matches(const char * text, char * dummy, int start);
 char ** dhcp_completion_matches(const char * text, char * dummy, int start);
 char ** route_completion_matches(const char * text, char * dummy, int start);
 
-/* Utility function forwards */
-
-int find_ifs(void);
-char *command_generator PARAMS((const char *, int));
-int path_clean PARAMS((char **));
-char **cfgsh_completion PARAMS((const char *, int, int));
-void initialize_readline(void);
-int execute_line (char *line);
-int commit_file(char * tmp_file, char *file);
-
 /* A structure which contains information on the commands this program
    can understand. */
 
@@ -172,14 +168,18 @@ typedef struct {
   char * complete_param;             /* Parameter to pass to complete_func, if any */
 } COMMAND;
 
+typedef struct  {
+  char primary[IPQUADSIZ];
+  char secondary[IPQUADSIZ];
+  char domain[HOST_NAME_MAX];
+} dns_record;
+
 typedef struct {
   char ip[NUMIF][IPQUADSIZ];
   char nmask[NUMIF][IPQUADSIZ];
   char bcast[NUMIF][IPQUADSIZ];
   char gw[IPQUADSIZ];
-  char ns_search[HOST_NAME_MAX];
-  char ns1[IPQUADSIZ];
-  char ns2[IPQUADSIZ];
+  dns_record nameservers;
   char role[PATH_MAX];
   char tz[PATH_MAX];
   char dhcp[NUMIF][DHCP_OPT];
@@ -189,11 +189,20 @@ typedef struct {
   char num_ifs;
 } CONF;
 
-
 /* External functions */
 extern char *xmalloc ();
-  
-/* Forward declarations. */
+
+/* Utility function forwards */
+                                                                                
+int find_ifs(void);
+char *command_generator PARAMS((const char *, int));
+int path_clean PARAMS((char **));
+char **cfgsh_completion PARAMS((const char *, int, int));
+void initialize_readline(void);
+int execute_line (char *line);
+int commit_file(char * tmp_file, char *file);
+int get_resolver (dns_record *nameservers);
+int write_resolver (dns_record nameservers);
 char *stripwhite ();
 COMMAND *find_command ();
 char * complete_help(char * arg);
@@ -213,5 +222,9 @@ typedef enum addr_set_ops_enum {
   SET_ADDRESS = SIOCSIFADDR 
 } ADDR_SET_OPS;
 		
+
+/* Explicit decleration of setresuid/setresgid. man 2 setresuid to know why we do this stupid thing */
+int setresuid(uid_t ruid, uid_t euid, uid_t suid);
+int setresgid(gid_t rgid, gid_t egid, gid_t sgid);
 
 #endif /* INCLUDE_CFGSH_H */
