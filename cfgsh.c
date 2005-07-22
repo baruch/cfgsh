@@ -110,7 +110,7 @@ COMMAND network_commands[] = {
 COMMAND nameservers_commands[] = {
   { "primary", com_ns, "Display or set primary name server address: primary [address]", NULL, NULL},
   { "secondary", com_ns2, "Display or set secondary name server address: secondary [address]", NULL, NULL},
-  { "search", com_search, "Display or domain search: search [domain]", NULL, NULL},
+  { "search", com_search, "Display or domain search path: search [domain]", NULL, NULL},
   { "exit", com_net, "Return to network mode", NULL, NULL},
   { "quit", com_quit, "Logout", NULL, NULL},
   { "help", com_help, "Display this text" , NULL, NULL},
@@ -586,7 +586,7 @@ get_resolver (dns_record *nameservers)
 	FILE *resolv;
 
 	const char *nameserver_C = "nameserver ";
-	const char *domain_C = "domain ";
+	const char *domain_C = "search ";
 	const char *comment_C = "#";
 
 	int  priority = 0;
@@ -634,7 +634,7 @@ get_resolver (dns_record *nameservers)
 
 					}
 		}
-		//Search for a 'domain' line.
+		//Search for a 'search' line.
 		else if( (nameserver_str = strstr(resolv_line, domain_C)) != NULL)
 		{
 			nameserver_str += strlen(domain_C);
@@ -675,11 +675,11 @@ int write_resolver(dns_record nameservers)
   if(! checkarg(nameservers.secondary, "none") )
     fprintf(file, "nameserver %s\n", nameservers.secondary);
 
-  /* Enforce a domain / search mutex */
-  if(! checkarg(nameservers.secondary, "none") )
-    fprintf(file, "domain %s\n", nameservers.domain);
-  else
-    fprintf(file, "\nsearch localhost\n");
+   fprintf(file, "search ");
+   if(! checkarg(nameservers.domain, "none") )
+     fprintf(file, "%s\n", nameservers.domain);
+   else
+     fprintf(file, "localhost\n");
 
   fclose(file);
 

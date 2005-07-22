@@ -7,6 +7,9 @@
  	  resolv.conf, use TCP connection for DNS resolution to solve
 	  issue of "put wrong DNS, wait 20 seconds for timeout punishment" 
 	   and remove a lot of empty lines from the source :-)
+	- Commited Ami Chayun <ami@beyondsecurity.com>  provided patch
+	  to replace in write_resolver and get_resolver the use of 'domain' 
+	  with 'search'
 
 1.1.2 28 September 2004
 	- Introduced IOS style hirarichal menus with context sensative prompts.
