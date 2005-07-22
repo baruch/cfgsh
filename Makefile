@@ -26,6 +26,8 @@ EXECUTABLES = cfgsh
 
 all: $(EXECUTABLES)
 
+cfgsh.o: cfgsh.c cfgsh.h
+
 clean:
 	$(RM) $(EXECUTABLES) *.o
 

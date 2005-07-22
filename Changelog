@@ -1,4 +1,7 @@
 
+	- Commited Ami Chayun <ami@beyondsecurity.com> provided checkarg patch:
+	  A safe(r) replacement to strcmp (if used wisely).
+
 1.1.2 28 September 2004
 	- Introduced IOS style hirarichal menus with context sensative prompts.
 	- Much enhanced context sensative completion options for many commands.
