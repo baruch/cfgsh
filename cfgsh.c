@@ -517,7 +517,7 @@ set_if_address(char * if_name, char * in_address, ADDR_SET_OPS operation, char *
    address must point to a buffer of at least DQUADSIZ size */
 
 int
-get_if_address(char * if_name, char * address, ADDR_GET_OPS operation) {
+get_if_address(const char * if_name, char * address, ADDR_GET_OPS operation) {
 
   struct ifreq ifr;
   int sock, ret;
@@ -540,6 +540,37 @@ get_if_address(char * if_name, char * address, ADDR_GET_OPS operation) {
   } else {
 
     ret = errno;
+  }
+
+  close(sock);
+  return ret;
+}
+
+/* A helper function to get one of the interfcace HW address,
+   address must point to a buffer of at least DQUADSIZ size */
+
+int
+get_if_hw_address(char * if_name, char * mac_address ) {
+
+  struct ifreq ifr;
+  int sock, ret;
+
+  if((!if_name) || (!mac_address))
+    return EFAULT;
+
+  if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0 )
+    return errno;	//socket failed
+  
+  strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
+
+  if(! ioctl(sock, SIOCGIFHWADDR , &ifr) ) {
+	  
+    memcpy(mac_address, ifr.ifr_hwaddr.sa_data, 6);
+    ret = 0;
+
+  } else {
+
+    ret = errno; //ioctl failed
   }
 
   close(sock);
@@ -1931,6 +1962,7 @@ int com_gw (char *arg)
 
 int com_dhcp (char *arg)
 {
+  char ip[IPQUADSIZ]; //to display bounded address
 
   arg = stripwhite(arg);
 
@@ -1957,6 +1989,9 @@ int com_dhcp (char *arg)
 
       conf->dhcp_is_on[current_ifr] = 1;
       printf("DHCP is on for interface %s\n", ifrname);
+	  
+      if(get_if_address(ifrname, ip, GET_ADDRESS) == 0)
+	    printf ("Bound to IP: %s\n", ip);
     }
 
     goto out;
@@ -1981,6 +2016,9 @@ int com_dhcp (char *arg)
     } else {
       conf->dhcp_is_on[current_ifr] = 1;
       printf("DHCP is on in iponly mode for interface %d\n", current_ifr);
+	  
+      if(get_if_address(ifrname, ip, GET_ADDRESS) == 0)
+	    printf ("Bound to IP: %s\n", ip);
     }
 
     goto out;
