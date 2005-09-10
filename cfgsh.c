@@ -100,6 +100,7 @@ COMMAND network_commands[] = {
   { "interface", com_int, "Set active network interfaces: interface [interface name]", interface_completion_matches, NULL},
   { "route", com_route, "Enter route configuration mode: route [priority]", NULL, NULL},
   { "default", com_gw, "Display or set default gateway address: gateway [address]", NULL, NULL},
+  { "gateway", com_gw, "Display or set default gateway address: gateway [address]", NULL, NULL},
   { "resolver", com_nameservers, "Enter domain name resolution configuration mode: resolver", NULL, NULL},
   { "ns", com_ns, "Configure DNS", NULL, NULL},
   { "exit", com_root, "Return to root mode", NULL, NULL},
@@ -181,6 +182,8 @@ unsigned int current_route;
 /* show prompt and online help? */
 static int show_prompt = 1;
 
+/* keep the user command as an args vector */
+static char *cmd_argv[ARG_MAX] ; /* Note: arguments should never be NULL */
 
 /* **************************************************************** */
 /*                                                                  */
@@ -270,7 +273,7 @@ int init_config (int setup) {
     strcpy(conf->nmask[i], "none");
     strcpy(conf->bcast[i], "none");
 	
-	/* Save the MAC address for later use */
+    /* Save the MAC address for later use */
 	sprintf(ifrname, "%s%d", IFNAMEBASE, i);
 	if(! get_if_hw_address(ifrname, conf->mac_addr[i]) == 0)
 		memset(conf->mac_addr[i], 0, HWADDRSIZ);
@@ -931,42 +934,40 @@ int main(int argc, char * argv[])
 /* Execute a command line. */
 int execute_line (char *line)
 {
-  register int i;
-  COMMAND *command;
-  char *word;
 
-  /* Isolate the command word. */
-  i = 0;
-  while (line[i] && whitespace (line[i]))
-    i++;
-  word = line + i;
+   register int i, last_arg = 0;
+    COMMAND *command;
+   char *word = line, *end_word;
 
-  while (line[i] && !whitespace (line[i]))
-    i++;
+   /* Init cmd_argv */
+   for(i = 0; i < ARG_MAX; i++)
+         cmd_argv[i] = "";
 
-  if (line[i])
-    line[i++] = '\0';
+   /* Parse the line to argument vector, and clean them up */
+   for(i = 0; i < ARG_MAX && ! last_arg; ++i, word = ++end_word)
+   {
+         end_word = strpbrk(word, rl_basic_word_break_characters);
+         if(end_word)
+           *end_word = '\0';
+         else
+               last_arg = 1; //end_word is the end of string. Last iteration
 
-  if(word[0] == '#') {
-    return 0;
-  }
-
-  command = find_command (word);
-
-  if (!command)
-    {
-      fprintf (stderr, "%s: No such command.\n", word);
-      return (-1);
+         cmd_argv[i] = stripwhite(word);
     }
+                                                                                                                             
+   if(!cmd_argv[0] || *cmd_argv[0] == '#')
+         return 0;
+                                                                                                                             
+   command = find_command (cmd_argv[0]);
+    if (!command)
+      {
+       fprintf (stderr, "%s: No such command.\n", cmd_argv[0]);
+        return (-1);
+      }
+                                                                                                                             
+    /* Call the function. */
+   return ((*(command->func)) (cmd_argv[1]));
 
-  /* Get argument to command, if any. */
-  while (whitespace (line[i]))
-    i++;
-
-  word = line + i;
-
-  /* Call the function. */
-  return ((*(command->func)) (word));
 }
 
 /* Look up NAME as the name of a command, and return a pointer to that
@@ -1080,11 +1081,12 @@ char * interface_generator(const char *text, int state)
 
     char * if_name = xmalloc(IFNAMESIZ);
 
+
     if(!if_name) goto out;
 
     snprintf(if_name, IFNAMESIZ, "%s%d", IFNAMEBASE, list_index++);
 
-    if( checkarg(if_name, text) ) {
+    if( !strncmp(if_name, text, strlen(text)) ) {
       return if_name;
     }
 
@@ -1369,8 +1371,6 @@ int com_ip (char *arg)
   int ret;
   char ip[IPQUADSIZ];
 
-  arg = stripwhite(arg);
-
   if (*arg) {
 
     if( checkarg(arg, "none") ) {
@@ -1418,9 +1418,6 @@ int com_netmask (char *arg)
 
   int ret;
 
-
-  arg = stripwhite(arg);
-
   if (*arg) {
 
     if( checkarg(arg, "none") ) {
@@ -1459,8 +1456,6 @@ int com_netmask (char *arg)
 int com_broadcast (char *arg)
 {
   int ret;
-
-  arg = stripwhite(arg);
 
   // ???  auto_broadcast(current_ifr);
 
@@ -1505,8 +1500,6 @@ int com_broadcast (char *arg)
 
 int com_show(char * arg)
 {
-
-  arg = stripwhite(arg);
   unsigned int i;
 
   if (*arg) {
@@ -1598,8 +1591,6 @@ int com_save(char * arg)
 int com_role (char *arg)
 {
 
-  arg = stripwhite(arg);
-
   if (*arg) {
 
     char rolepath[PATH_MAX];
@@ -1653,29 +1644,25 @@ int com_ns (char *arg)
 	dns_record nameservers;
 	get_resolver(&nameservers); /* Try to load current resolv.conf configuration */
 
-  arg = stripwhite(arg);
-
   if (*arg) {
 	//check if user wishes to set an attribute
-	if( strstr(arg, "primary") == arg )
-	{
-		arg += strlen("primary");
-		arg = stripwhite(arg);
+	if( checkarg(arg, "primary") )
 		set_who = RESOLV_SET_PRIMARY;
-	}
-	else if( strstr(arg, "secondary") == arg)
-	{
-		arg += strlen("secondary");
-		arg = stripwhite(arg);
+	
+	else if( checkarg(arg, "secondary") )
 		set_who = RESOLV_SET_SECONDARY;
-	}
-	else if( strstr(arg, "domain") == arg)
-	{
-		arg += strlen("domain");
-		arg = stripwhite(arg);
+	
+	else if( checkarg(arg, "domain") )
 		set_who = RESOLV_SET_DOMAIN;
+	else
+	{
+      printf("%s: Unknown nameserver command\n", arg);
+	  return -1;
 	}
-
+	
+	/* Now process the second argument */
+	arg = cmd_argv[2];
+	
     /* If the user wish to delete a record. For example 'ns secondary none' */
     if( checkarg(arg, "none") ) {
       if( set_who & RESOLV_SET_PRIMARY )
@@ -1760,18 +1747,18 @@ int com_ns (char *arg)
 
 int com_ns2 (char *arg)
 {
-  char fullarg[HOST_NAME_MAX + 10] = {0};
-  strcpy(fullarg, "secondary ");
-  strncat(fullarg, arg, HOST_NAME_MAX - 1);
-  return com_ns(fullarg);
+  cmd_argv[2] = arg;
+  cmd_argv[1] = "secondary";
+
+  return com_ns(cmd_argv[1]);
 }
 
 int com_search (char *arg)
 {
-  char fullarg[HOST_NAME_MAX + 10] = {0};
-  strcpy(fullarg, "domain ");
-  strncat(fullarg, arg, HOST_NAME_MAX - 1);
-  return com_ns(fullarg);
+  cmd_argv[2] = arg;
+  cmd_argv[1] = "domain";
+
+  return com_ns(cmd_argv[1]);
 } 
 
 #define NULLADDR(_X) { _X.sin_port=0; _X.sin_family=AF_INET; _X.sin_addr.s_addr = INADDR_ANY;} while(0)
@@ -1884,7 +1871,9 @@ int com_show_route (char *arg)
 int com_set_route (char *arg)
 {
   struct sockaddr_in target, netmask, gateway;
-  char * dev = NULL, * target_s, * netmask_s, *gateway_s;
+  char *target_s = cmd_argv[1], *netmask_s = cmd_argv[2];
+  char *dev = cmd_argv[3], *gateway_s = cmd_argv[4];
+  
   char tmp_route_s[MAX_ROUTE_SIZE];
   int ret, sock;
   struct rtentry rt;
@@ -1893,8 +1882,7 @@ int com_set_route (char *arg)
   NULLADDR(netmask);
   NULLADDR(gateway);
 
-  target_s = strtok(arg, rl_basic_word_break_characters);
-
+  /* target */
   if(!target_s)
     goto noarg;
 
@@ -1906,8 +1894,7 @@ int com_set_route (char *arg)
     goto error;
   }
 
-  netmask_s = strtok(NULL, rl_basic_word_break_characters);
-
+  /* netmask */
   if(!netmask_s)
     goto noarg;
 
@@ -1915,12 +1902,9 @@ int com_set_route (char *arg)
     goto error;
   }
 
-  dev = strtok(NULL, rl_basic_word_break_characters);
-
-  if(!dev)
+  /* dev */
+  if( !dev || ! strlen(dev) )
     goto noarg;
-
-  gateway_s = strtok(NULL, rl_basic_word_break_characters);
 
   if(!gateway_s)
     goto doit;
@@ -1990,8 +1974,6 @@ int com_gw (char *arg)
   struct rtentry rt;
   struct sockaddr_in sockaddr, deladdr;
 
-
-  arg = stripwhite(arg);
 
   if (!*arg) {
 
@@ -2088,27 +2070,24 @@ int find_service_action(const int service_id, const char *service_action)
 /* Service control */
 int com_service (char *arg)
 {
-  char *service_name = NULL, *service_action = NULL;
-  char *cmd[3] = {0};
-  int i, ret, service_id = -1;
-  struct stat buf;
-  
-  arg = stripwhite(arg);
 
-  if (!*arg) {
+   char *service_name = cmd_argv[1], *service_action = cmd_argv[2];
+    char *cmd[3] = {0};
+    int i, ret, service_id = -1;
+    struct stat buf;
+                                                                                                                             
+    if (!*arg) {
+                                                                                                                             
+     printf ("%s: Service not supported, available system services:\n", arg);
+        /* TBD */
+      return 0;
+                                                                                                                             
+    }
+                                                                                                                             
+    /* Try to find the requested service name */
+    if( (service_id = find_service(service_name)) < 0 )
+    {
 
-    printf ("Available system services:\n");
-	/* TBD */
-    return 0;
-
-  }
-  
-  service_name = strtok(arg, " ");
-  service_action = strtok(NULL, " ");
-
-  /* Try to find the requested service name */
-  if( (service_id = find_service(service_name)) < 0 )
-  {
 	  printf("Requested service not supported\n");
 	  return -1;
   }
@@ -2157,8 +2136,6 @@ int com_service (char *arg)
 int com_dhcp (char *arg)
 {
   char ip[IPQUADSIZ]; //to display bounded address
-
-  arg = stripwhite(arg);
 
   if (!*arg) {
     printf ("DHCP is %s for interface %s\n", conf->dhcp[current_ifr], ifrname);
@@ -2236,8 +2213,6 @@ return 0;
 int com_tz (char * arg)
 {
 
-  arg = stripwhite(arg);
-
   if (*arg) {
 
     char tzpath[PATH_MAX];
@@ -2267,7 +2242,7 @@ int com_tz (char * arg)
       printf("Time zone set to %s.\n", arg);
       strncpy(conf->tz, arg, PATH_MAX);
     } else {
-      printf("Time zone setup failure!");
+      printf("Time zone setup failure!\n");
     }
 
   } else {
@@ -2413,11 +2388,9 @@ int com_route (char *arg)
 
   char tmp[PROMPT_SIZE];
 
-  arg = stripwhite(arg);
-
   if (!*arg) {
 
-    printf ("Please supply a route proiority. Press TAB to get a list of available ones.\n");
+    printf ("Please supply route proiority. Press TAB to get a list of available ones.\n");
     return 1;
   }
 
@@ -2448,9 +2421,7 @@ int com_root (char *arg)
 /* Set hostname */
 int com_hostname (char *arg)
 {
-
   int size;
-  arg = stripwhite(arg);
 
   if (!*arg) {
 
