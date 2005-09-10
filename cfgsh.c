@@ -252,11 +252,17 @@ int init_config (int setup) {
 
     strcpy(conf->tz, "none");
 
-  for(i=0; i<conf->num_ifs; i++) {
+  for(i=0; i<conf->num_ifs && i < NUMIF; i++) {
     strcpy(conf->dhcp[i], "off");
     strcpy(conf->ip[i], "none");
     strcpy(conf->nmask[i], "none");
     strcpy(conf->bcast[i], "none");
+	
+	/* Save the MAC address for later use */
+	sprintf(ifrname, "%s%d", IFNAMEBASE, i);
+	if(! get_if_hw_address(ifrname, conf->mac_addr[i]) == 0)
+		memset(conf->mac_addr[i], 0, HWADDRSIZ);
+
   }
 
     strcpy(conf->gw, "none");
@@ -565,7 +571,7 @@ get_if_hw_address(char * if_name, char * mac_address ) {
 
   if(! ioctl(sock, SIOCGIFHWADDR , &ifr) ) {
 	  
-    memcpy(mac_address, ifr.ifr_hwaddr.sa_data, 6);
+    memcpy(mac_address, ifr.ifr_hwaddr.sa_data, HWADDRSIZ);
     ret = 0;
 
   } else {
@@ -1097,7 +1103,8 @@ char * opt_generator(char ** gen_options, const char *text, int state)
     {
       list_index++;
 
-      if ( checkarg(name, text) )
+	if ( !strncmp(text, name, strlen(text)) )        /* Don't use checkarg, 
+because we also want partial matches */
         return (dupstr(name));
     }
 
@@ -1238,8 +1245,8 @@ char * command_generator(const char *text, int state)
     {
       list_index++;
 
-      if ( checkarg(name, text) )
-        return (dupstr(name));
+	if ( !strncmp(name, text, strlen(text)) )
+	        return (dupstr(name));
     }
 
   /* If no names matched, then return NULL. */
@@ -1255,7 +1262,7 @@ int getifr(char * arg, char * ifrname, unsigned int * ifr)
    return EINVAL;
   }
 
-  if(*ifr > conf->num_ifs) {
+  if(*ifr >= conf->num_ifs) {
     return EINVAL;
   }
 
@@ -1428,6 +1435,10 @@ int com_show(char * arg)
 	com_netmask("");
 	com_broadcast("");
 	com_dhcp("");
+	printf("%s%d HW ADDR: %02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX\n", 
+		IFNAMEBASE, i, conf->mac_addr[i][0], conf->mac_addr[i][1], 
+		conf->mac_addr[i][2], conf->mac_addr[i][3], conf->mac_addr[i][4],
+		conf->mac_addr[i][5]);
       }
 
       return 0;

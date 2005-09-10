@@ -29,6 +29,8 @@
 #define INCLUDE_CFGSH_H
 
 #define IPQUADSIZ (16)
+#define HWADDRSIZ (6)
+
 #define IFNAMEBASE "eth"
 #define IFNAMESIZ 5
 #define MAXIF (3)
@@ -175,6 +177,7 @@ typedef struct  {
 } dns_record;
 
 typedef struct {
+  char mac_addr[NUMIF][HWADDRSIZ];
   char ip[NUMIF][IPQUADSIZ];
   char nmask[NUMIF][IPQUADSIZ];
   char bcast[NUMIF][IPQUADSIZ];
@@ -193,7 +196,8 @@ typedef struct {
 extern char *xmalloc ();
 
 /* Utility function forwards */
-                                                                                
+
+int get_if_hw_address(char * , char * );
 int find_ifs(void);
 char *command_generator PARAMS((const char *, int));
 int path_clean PARAMS((char **));
