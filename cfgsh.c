@@ -83,6 +83,7 @@ COMMAND root_commands[] = {
   { "role", com_role, "Display or set system role: role [role]", path_completion_matches, ROLES_PATH},
   { "timezone", com_tz, "Display or set time zone: timezone [time zone]", path_completion_matches, ZONES_PATH},
   { "network", com_net, "Enter network configuration mode: network", NULL, NULL},
+  { "service", com_service, "Control system services: service [name] <action>", service_completion_matches, NULL},
   { "ping", com_ping, "Ping destination: ping  <hostname | address>", NULL, NULL},
   { "hostname", com_hostname, "Displays or set the host name: hostname [name]", NULL, NULL},
   { "halt", com_halt, "Shutdown", NULL, NULL},
@@ -136,6 +137,17 @@ COMMAND interface_commands[] = {
   { "quit", com_quit, "Logout", NULL, NULL},
   { "help", com_help, "Display this text" , NULL, NULL },
   { (char *)NULL, (rl_icpfunc_t *)NULL, (char *)NULL, (complete_func_t *)NULL, (char *)NULL}
+};
+
+
+SERVICE system_services[] = {
+  { "ssh", "/etc/init.d/ssh", 0, 
+	  { "stop", "start", "restart", (char *)NULL } 
+  },
+  { "apache", "/etc/init.d/httpd", 0, 
+	  { "stop", "start", "restart", "status", "reload", (char *)NULL } 
+  },
+  {(char *)NULL, (char *)NULL, 0, (char **)NULL}
 };
 
 char * show_options[] = { SHOW_OPT_CONFIG, SHOW_OPT_INTERFACES, SHOW_OPT_ROUTES, SHOW_OPT_RESOLVER, NULL};
@@ -826,8 +838,9 @@ void dump_config(FILE * file) {
   fprintf(file, "\t\texit\n");
   fprintf(file, "\texit\n");
 
+#ifdef ROLE_FUNC
   fprintf(file, "role %s\n", conf->role);
-
+#endif
 
   return;
 
@@ -1123,6 +1136,62 @@ char * dhcp_generator(const char *text, int state)
   return opt_generator(dhcp_options, text, state);
 }
 
+char * service_name_generator(const char *text, int state)
+{
+	static int list_index;
+
+  /* If this is a new word to complete (state == 0), initialize now.  This includes
+     saving the length of TEXT for efficiency, and initializing the index
+     variable to 0. */
+
+  if (!state) {
+    list_index = 0;
+  }
+
+  for(; system_services[list_index].name && strlen(system_services[list_index].name); ++list_index)
+   	if(! strncmp(text, system_services[list_index].name, strlen(text)) )
+		/* return current name and inc list_index to skip it in the next pass */
+   		return (dupstr(system_services[list_index++].name));
+
+  return ((char *)NULL);
+	
+}
+
+char * service_action_generator(const char *text, int state)
+{
+  static int service_id = 0;
+  char *service_name = NULL;
+  char *arg_start, *arg_end;
+  
+  /* If this is a new word to complete (state == 0), initialize now.
+	This means we set the proper service_id to work with */
+  if(! state )
+  {
+    /* Yank the first arg of the command line (service name) */
+    arg_start = strpbrk(rl_line_buffer, rl_basic_word_break_characters);
+    for(; isspace(*arg_start); arg_start++);
+  
+    arg_end = strpbrk(arg_start, rl_basic_word_break_characters);
+  
+    if(arg_start && arg_end)
+    {
+      service_name = calloc(arg_end - arg_start + 1, sizeof(char));
+      service_name = strncpy(service_name, arg_start, arg_end - arg_start);
+    }
+  
+    /* Get the service id of the user requested service */
+    service_id = find_service(service_name);
+    free(service_name);
+  }
+
+  if( service_id >= 0 )
+    return opt_generator( system_services[service_id].actions, text, state);
+
+  return ((char *)NULL);
+	
+}
+
+
 char ** interface_completion_matches(const char * text, char * dummy, int start)
 
 {
@@ -1161,6 +1230,22 @@ char ** dhcp_completion_matches(const char * text, char * dummy, int start)
   if(word_num(start, rl_line_buffer) == 1)
     return rl_completion_matches(text, dhcp_generator);
 
+  return NULL;
+
+}
+
+
+char ** service_completion_matches(const char * text, char * dummy, int start)
+
+{
+  /* First word completes service name */
+  if(word_num(start, rl_line_buffer) == 1)
+	return rl_completion_matches(text, service_name_generator);
+
+  /* Second word completes service action */
+  if(word_num(start, rl_line_buffer) == 2)
+	return rl_completion_matches(text, service_action_generator);
+    
   return NULL;
 
 }
@@ -1971,6 +2056,104 @@ int com_gw (char *arg)
 
 }
 
+/* Stupid search in struct array */
+int find_service(const char *service_name)
+{
+  int i;
+  if(! service_name || ! strlen(service_name) )
+          return -1;
+                                                                                                                             
+	for(i = 0; system_services[i].name && strlen(system_services[i].name); i++)
+    		if( checkarg(service_name, system_services[i].name) )
+      			return i;
+                                                                                                                             
+  return (-1);
+}
+                                                                                                                             
+/* Stupid search string in array */
+int find_service_action(const int service_id, const char *service_action)
+{
+  int i;
+                                                                                                                             
+  if(! service_action || ! strlen(service_action) || service_id < 0 )
+          return -1;
+                                                                                                                             
+  for(i = 0; system_services[service_id].actions[i]; i++)
+          if( checkarg(service_action, system_services[service_id].actions[i]) )
+                  return i;
+                                                                                                                             
+  return (-1);
+}
+
+/* Service control */
+int com_service (char *arg)
+{
+  char *service_name = NULL, *service_action = NULL;
+  char *cmd[3] = {0};
+  int i, ret, service_id = -1;
+  struct stat buf;
+  
+  arg = stripwhite(arg);
+
+  if (!*arg) {
+
+    printf ("Available system services:\n");
+	/* TBD */
+    return 0;
+
+  }
+  
+  service_name = strtok(arg, " ");
+  service_action = strtok(NULL, " ");
+
+  /* Try to find the requested service name */
+  if( (service_id = find_service(service_name)) < 0 )
+  {
+	  printf("Requested service not supported\n");
+	  return -1;
+  }
+
+  /* Check if the action is supported */
+  if( find_service_action(service_id, service_action) < 0 )
+  {
+	  printf("Requested action not supported. Available actions { ");
+	  for(i = 0; system_services[service_id].actions[i] ; i++)
+		  printf("%s ", system_services[service_id].actions[i]);
+	  printf(" }\n");
+	  return -1;
+  }
+
+  /* Don't trust the initialized values. Check if the file exist and executable*/
+  if( stat(system_services[service_id].file, &buf) != 0 ||  ! (buf.st_mode & S_IXUSR) )
+  {
+    printf("Error. Invalid Service script. Maybe this will help: %s\n", strerror(errno));
+	return -1;
+  }
+  
+  /* Run the script / executable with the desired action */
+  cmd[0] = service_name;
+  cmd[1] = service_action;
+  ret = safesystem(system_services[service_id].file, cmd);
+  
+  if(! ret )
+  {
+    /* If 'start' / 'restart' was chosen, mark service as enabled */
+	if( checkarg("start", service_action) || checkarg("restart", service_action) )
+		system_services[service_id].service_is_enabled = 1;
+	
+    /* If 'stop' was chosen, mark service as disabled */
+	if( checkarg("stop", service_action) )
+		system_services[service_id].service_is_enabled = 0;
+	
+  }
+
+  return (0);
+}
+
+
+
+
+
 int com_dhcp (char *arg)
 {
   char ip[IPQUADSIZ]; //to display bounded address
@@ -2008,7 +2191,6 @@ int com_dhcp (char *arg)
     goto out;
 
   }
-
 
   if( checkarg(arg, DHCP_OPT_IPONLY) ) {
 

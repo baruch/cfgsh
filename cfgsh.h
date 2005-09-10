@@ -49,6 +49,9 @@
 #define PING_COUNT_PARAM "-c"
 #define PING_COUNT "4"
 
+/* Maximum number of available options */
+#define OPT_MAX (10)
+
 /* Location of system DNS resolver config file */
 #define RESOLV_PATH "/etc/resolv.conf"
 
@@ -88,8 +91,8 @@
 
 /* Path to directory with all possible system roles */
 #define ROLES_PATH "/etc/roles/"
-
 #define HOST_NAME_MAX (255)
+
 #define APP_NAME "cfgsh"
 
 /* This is the system prompt */
@@ -150,6 +153,7 @@ int com_route PARAMS((char *));
 int com_set_route PARAMS((char *));
 int com_del_route PARAMS((char *));
 int com_show_route PARAMS((char *));
+int com_service PARAMS((char *));
 
 /* Completion function forwads */
 
@@ -158,6 +162,7 @@ char ** interface_completion_matches(const char *, char *, int);
 char ** show_completion_matches(const char * text, char * dummy, int start);
 char ** dhcp_completion_matches(const char * text, char * dummy, int start);
 char ** route_completion_matches(const char * text, char * dummy, int start);
+char ** service_completion_matches(const char * text, char * dummy, int start);
 
 /* A structure which contains information on the commands this program
    can understand. */
@@ -169,6 +174,11 @@ typedef struct {
   complete_func_t *complete_func;    /* Function to call for line completition, if any */
   char * complete_param;             /* Parameter to pass to complete_func, if any */
 } COMMAND;
+
+/* com_service utilities */
+int find_service(const char *);
+int find_service_action(const int , const char *);
+
 
 typedef struct  {
   char primary[IPQUADSIZ];
@@ -191,6 +201,14 @@ typedef struct {
   char route  [ROUTE_NUM][MAX_ROUTE_SIZE];
   char num_ifs;
 } CONF;
+
+typedef struct {
+  char *name;
+  char file[PATH_MAX];
+  int  service_is_enabled;
+  char *actions[OPT_MAX];
+} SERVICE;
+ 
 
 /* External functions */
 extern char *xmalloc ();
