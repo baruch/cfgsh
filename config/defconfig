@@ -1,0 +1,26 @@
+#
+# Automatically generated make config: don't edit
+#
+HAVE_DOT_CONFIG=y
+
+#
+# General Configuration
+#
+CONFIG_ROLES=y
+
+#
+# Build Options
+#
+# CONFIG_STATIC is not set
+# USING_CROSS_COMPILER is not set
+EXTRA_CFLAGS_OPTIONS=""
+
+#
+# Installation Options
+#
+PREFIX="./_install"
+
+#
+# Debugging Options
+#
+# CONFIG_DEBUG is not set

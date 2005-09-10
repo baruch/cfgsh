@@ -28,6 +28,8 @@
 #ifndef INCLUDE_CFGSH_H
 #define INCLUDE_CFGSH_H
 
+#include "config.h"
+
 #define IPQUADSIZ (16)
 #define HWADDRSIZ (6)
 

@@ -1,0 +1,106 @@
+#
+# For a description of the syntax of this configuration file,
+# see scripts/kbuild/config-language.txt.
+#
+
+mainmenu "Config Shell Configuration"
+
+config HAVE_DOT_CONFIG
+	bool
+	default y
+
+menu "General Configuration"
+
+	config CFGSH_ROLE_CMD
+	bool "Include  support for choosing system role?"
+	default n
+	help
+	  If you want to enable the "role" command, say
+	  yes here.
+
+	config CFGSH_TZ_CMD
+	bool "Include support for setting system time zone?"
+	default y
+	help
+	  If you want to enable the "timezone" command,
+	  say yes here.
+
+	config CFGSH_NET_MENU
+	default y
+	bool "Include support for setting network parameters?"
+	help
+	  If you want to enable the "network" menu, say yes here.
+	
+
+endmenu
+
+menu 'Build Options'
+
+config CFGSH_STATIC
+	bool "Build cfgsh as a static binary (no shared libs)"
+	default n
+	help
+	  If you want to build a static cfgsh binary, which does not
+	  use or require any shared libraries, then enable this option.
+	  This can cause cfgsh to be considerably larger, so you should
+	  leave this option false unless you have a good reason (i.e.
+	  your target platform does not support shared libraries, or
+	  you are building an initrd which doesn't need anything but
+	  cfgsh, etc).
+
+	  Most people will leave this set to 'N'.
+
+config USING_CROSS_COMPILER
+	bool "Do you want to build cfgsh with a Cross Compiler?"
+	default n
+	help
+	  Do you want to build cfgsh with a Cross Compiler?  If so,
+	  then enable this option.  Otherwise leave it set to 'N'.
+
+config CROSS_COMPILER_PREFIX
+	string "Cross Compiler prefix"
+	default "/usr/i386-linux-uclibc/bin/i386-uclibc-"
+	depends on USING_CROSS_COMPILER
+	help
+	  If you want to build cfgsh with a cross compiler, then you
+	  will need to set this to the cross-compiler prefix.  For example,
+	  if my cross-compiler is /usr/i386-linux-uclibc/bin/i386-uclibc-gcc
+	  then I would enter '/usr/i386-linux-uclibc/bin/i386-uclibc-' here,
+	  which will ensure the correct compiler is used.
+
+config EXTRA_CFLAGS_OPTIONS
+	string "Any extra CFLAGS options for the compiler?"
+	default ""
+	help
+	  Do you want to pass any extra CFLAGS options to the compiler as
+	  you build cfgsh? If so, this is the option for you...  For example,
+	  if you want to add some simple compiler switches (like -march=i686),
+	  or check for warnings using -Werror, just those options here.
+
+endmenu
+
+menu 'Installation Options'
+
+config PREFIX
+	string "cfgsh installation prefix"
+	default "./_install"
+	help
+	  Define your directory to install cfgsh files/subdirs in.
+endmenu
+
+menu 'Debugging Options'
+
+config CFGSH_DEBUG
+	bool "Build cfgsh with Debugging symbols"
+	default n
+	help
+	  Say Y here if you wish to compile cfgsh with debugging symbols.
+	  This will allow you to use a debugger to examine cfgsh internals
+	  while applets are running.  This increases the size of the binary
+	  considerably and should only be used when doing development.
+	  If you are doing development and want to debug cfgsh, answer Y.
+
+	  Most people should answer N.
+
+endmenu
+
