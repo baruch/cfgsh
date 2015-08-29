@@ -148,7 +148,7 @@ SERVICE system_services[] = {
   { "apache", "/etc/init.d/httpd", 0, 
 	  { "stop", "start", "restart", "status", "reload", (char *)NULL } 
   },
-  {(char *)NULL, (char *)NULL, 0, (char **)NULL}
+  {(char *)NULL, NULL, 0, NULL}
 };
 
 char * show_options[] = { SHOW_OPT_CONFIG, SHOW_OPT_INTERFACES, SHOW_OPT_ROUTES, SHOW_OPT_RESOLVER, NULL};
