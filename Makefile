@@ -36,7 +36,10 @@ EXECUTABLES = cfgsh
 
 .PHONY: all clean distclean menuconfig oldconfig config
 
-all: $(EXECUTABLES)
+all: is_configured $(EXECUTABLES)
+
+is_configured:
+	@if [ ! -e include/config.h ]; then echo "ERROR: No configuration defined, use 'make menuconfig' first"; exit 1; fi
 
 clean:
 	$(RM) $(EXECUTABLES) *.o
