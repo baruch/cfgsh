@@ -193,10 +193,11 @@ static char *cmd_argv[ARG_MAX] ; /* Note: arguments should never be NULL */
 /* **************************************************************** */
 
 /* A safe(r) replacement to strcmp (if used wisely) */
-inline int checkarg(const char *uarg, const char *carg)
+static inline int checkarg(const char *uarg, const char *carg)
 {
   return (!strncmp(uarg, carg, strlen(carg) + 1));
 }
+
 /* Return the number of the current word in the command line */
 int word_num(int start, char * text)
 {
