@@ -93,7 +93,6 @@
 
 /* Path to directory with all possible system roles */
 #define ROLES_PATH "/etc/roles/"
-#define HOST_NAME_MAX (255)
 
 #define APP_NAME "cfgsh"
 
