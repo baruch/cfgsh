@@ -183,6 +183,7 @@ unsigned int current_route;
 static int show_prompt = 1;
 
 /* keep the user command as an args vector */
+#define ARG_MAX 1024
 static char *cmd_argv[ARG_MAX] ; /* Note: arguments should never be NULL */
 
 /* **************************************************************** */
